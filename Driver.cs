@@ -3,6 +3,8 @@
 //----------------------------------------------------------------
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 
@@ -13,7 +15,7 @@ namespace Microsoft.Samples.Tools.FindPrivateKey
         static void PrintHelp()
         {
             Console.WriteLine("FindPrivateKey helps user to find the location of the Private Key file of a X.509 Certificate.");
-            Console.WriteLine("Usage: FindPrivateKey <storeName> <storeLocation> [{ {-n <subjectName>} | {-t <thumbprint>} } [-f | -d | -a]]");
+            Console.WriteLine("Usage: FindPrivateKey <storeName> <storeLocation> [{ {-n <issuerName(contains)>} | {-t <thumbprint>} } [-f | -d | -a]]");
             Console.WriteLine("       <subjectName> subject name of the certificate");
             Console.WriteLine("       <thumbprint>  thumbprint of the certificate (use certmgr.exe to get it)");
             Console.WriteLine("       -f            output file name only");
@@ -23,9 +25,9 @@ namespace Microsoft.Samples.Tools.FindPrivateKey
             Console.WriteLine("e.g. FindPrivateKey My LocalMachine -t \"03 33 98 63 d0 47 e7 48 71 33 62 64 76 5c 4c 9d 42 1d 6b 52\" -c");
         }
 
-		static void Main(string[] args)
-		{            
-            if (args.Length < 2 || args.Length == 3 || args.Length > 5 
+        static void Main(string[] args)
+        {
+            if (args.Length < 2 || args.Length == 3 || args.Length > 5
                 || (args.Length > 2 && args[2] != "-n" && args[2] != "-t")
                 || (args.Length == 5 && args[4] != "-f" && args[4] != "-d" && args[4] != "-a"))
             {
@@ -49,11 +51,11 @@ namespace Microsoft.Samples.Tools.FindPrivateKey
                     for (int i = 0; i < keys.Length; i++)
                     {
                         key += keys[i];
-                        if ( i != keys.Length -1 )
-                         key += ", ";
+                        if (i != keys.Length - 1)
+                            key += ", ";
                     }
                     if (args[2] == "-n")
-                        cert = LoadCertificate(storeName, storeLocation, key, X509FindType.FindBySubjectDistinguishedName);
+                        cert = LoadCertificate(storeName, storeLocation, key, X509FindType.FindByIssuerName);
                     else
                         cert = LoadCertificate(storeName, storeLocation, key, X509FindType.FindByThumbprint);
                 }
@@ -101,7 +103,7 @@ namespace Microsoft.Samples.Tools.FindPrivateKey
             try
             {
                 X509Certificate2Collection matches;
-		        matches = X509Certificate2UI.SelectFromCollection(store.Certificates, "Select certificate", "Select the certificate to find the location of the associated private key file:", X509SelectionFlag.SingleSelection);
+                matches = X509Certificate2UI.SelectFromCollection(store.Certificates, "Select certificate", "Select the certificate to find the location of the associated private key file:", X509SelectionFlag.SingleSelection);
                 if (matches.Count != 1)
                     result = null;
                 else
@@ -123,8 +125,15 @@ namespace Microsoft.Samples.Tools.FindPrivateKey
             store.Open(OpenFlags.ReadOnly);
             try
             {
-                X509Certificate2Collection matches;
-                matches = store.Certificates.Find(findType, key, false);
+                List<X509Certificate2> matches = new List<X509Certificate2>();
+                if (findType == X509FindType.FindByIssuerName)
+                {
+                    matches = store.Certificates.OfType<X509Certificate2>().Where(cert => cert.IssuerName.Name.Contains(key)).ToList();
+                }
+                else if (findType == X509FindType.FindByThumbprint)
+                {
+                    matches = store.Certificates.OfType<X509Certificate2>().Where(cert => cert.IssuerName.Name.Contains(key)).ToList();
+                }
                 if (matches.Count > 1)
                     throw new InvalidOperationException(String.Format("More than one certificate with key '{0}' found in the store.", key));
                 if (matches.Count == 0)
@@ -139,64 +148,64 @@ namespace Microsoft.Samples.Tools.FindPrivateKey
             return result;
         }
 
-		static string GetKeyFileName(X509Certificate2 cert)
-		{
-			IntPtr            hProvider     = IntPtr.Zero; // CSP handle
-			bool              freeProvider  = false;       // Do we need to free the CSP ?
-			uint               acquireFlags  = 0;
-			int			 	  _keyNumber = 0;
-			string			  keyFileName = null;
-			byte[]			  keyFileBytes = null;
+        static string GetKeyFileName(X509Certificate2 cert)
+        {
+            IntPtr hProvider = IntPtr.Zero; // CSP handle
+            bool freeProvider = false;       // Do we need to free the CSP ?
+            uint acquireFlags = 0;
+            int _keyNumber = 0;
+            string keyFileName = null;
+            byte[] keyFileBytes = null;
 
-			//
-			// Determine whether there is private key information available for this certificate in the key store
-			//
-			if ( CryptAcquireCertificatePrivateKey(cert.Handle,
-				acquireFlags,
-				IntPtr.Zero,
-				ref hProvider,
-				ref _keyNumber,
-				ref freeProvider) )
-			{
-				IntPtr pBytes  = IntPtr.Zero; // Native Memory for the CRYPT_KEY_PROV_INFO structure
-				int    cbBytes = 0;           // Native Memory size
+            //
+            // Determine whether there is private key information available for this certificate in the key store
+            //
+            if (CryptAcquireCertificatePrivateKey(cert.Handle,
+                acquireFlags,
+                IntPtr.Zero,
+                ref hProvider,
+                ref _keyNumber,
+                ref freeProvider))
+            {
+                IntPtr pBytes = IntPtr.Zero; // Native Memory for the CRYPT_KEY_PROV_INFO structure
+                int cbBytes = 0;           // Native Memory size
 
-				try
-				{
-					if ( CryptGetProvParam(hProvider, CryptGetProvParamType.PP_UNIQUE_CONTAINER, IntPtr.Zero, ref cbBytes, 0) )
-					{
-						pBytes = Marshal.AllocHGlobal(cbBytes);
+                try
+                {
+                    if (CryptGetProvParam(hProvider, CryptGetProvParamType.PP_UNIQUE_CONTAINER, IntPtr.Zero, ref cbBytes, 0))
+                    {
+                        pBytes = Marshal.AllocHGlobal(cbBytes);
 
-						if ( CryptGetProvParam(hProvider, CryptGetProvParamType.PP_UNIQUE_CONTAINER, pBytes, ref cbBytes, 0) )
-						{
-							keyFileBytes = new byte[cbBytes];
+                        if (CryptGetProvParam(hProvider, CryptGetProvParamType.PP_UNIQUE_CONTAINER, pBytes, ref cbBytes, 0))
+                        {
+                            keyFileBytes = new byte[cbBytes];
 
-							Marshal.Copy(pBytes,keyFileBytes,0,cbBytes);
+                            Marshal.Copy(pBytes, keyFileBytes, 0, cbBytes);
 
-							// Copy eveything except tailing null byte
-							keyFileName = System.Text.Encoding.ASCII.GetString(keyFileBytes, 0, keyFileBytes.Length-1);
-						}
-					}		
-				}
-				finally
-				{
-					if ( freeProvider )
-						CryptReleaseContext(hProvider,0);
+                            // Copy eveything except tailing null byte
+                            keyFileName = System.Text.Encoding.ASCII.GetString(keyFileBytes, 0, keyFileBytes.Length - 1);
+                        }
+                    }
+                }
+                finally
+                {
+                    if (freeProvider)
+                        CryptReleaseContext(hProvider, 0);
 
-					//
-					// Free our native memory
-					//
-					if ( pBytes != IntPtr.Zero )
-						Marshal.FreeHGlobal(pBytes);
+                    //
+                    // Free our native memory
+                    //
+                    if (pBytes != IntPtr.Zero)
+                        Marshal.FreeHGlobal(pBytes);
 
-				}
-			}
+                }
+            }
 
             if (keyFileName == null)
                 throw new InvalidOperationException("Unable to obtain private key file name");
 
             return keyFileName;
-		}
+        }
 
         static string GetKeyFileDirectory(string keyFileName)
         {
